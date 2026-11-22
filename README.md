@@ -21,15 +21,23 @@ No game assets or third-party UE4SS binaries are redistributed here, download of
 │   └── patch_ue4ss_splitgate2.py          # Optional Python reference patcher (for developers)
 └── ue4ss/                                 # Drop-in folder for PortalWars2\Binaries\Win64\
     ├── MemberVariableLayout.ini           # Verified Splitgate 2 UE 5.5.4 struct/field offsets
-    ├── VTableLayout.ini                   # Verified Splitgate 2 FMalloc vtable layout
+    ├── VTableLayout.ini                   # Verified Splitgate 2 FMalloc & UObject vtable layouts (ProcessEvent = 0x280)
     ├── UE4SS-settings.ini                 # Tested UE4SS settings for Splitgate 2
     ├── UE4SS_Signatures/
     │   └── GUObjectArray.lua              # Verified GUObjectArray AOB signature
     └── Mods/                              # Community Lua mods
-        ├── mods.txt                       # Enables MapEditorBudgetMod (+ ConsoleCommandsMod & Keybinds)
-        └── MapEditorBudgetMod/            # Raises "The Lab" Map Editor budget limit (5000 -> 10000)
-            └── scripts/
-                ├── config.lua
+        ├── mods.txt                       # Enables MapEditorBudgetMod & BotChatter (+ ConsoleCommandsMod & Keybinds)
+        ├── MapEditorBudgetMod/            # Raises "The Lab" Map Editor budget limit (5000 -> 10000)
+        │   └── scripts/
+        │       ├── config.lua
+        │       └── main.lua
+        └── BotChatter/                    # Realistic AI bot chat messages & custom bot names in P2P lobbies
+            ├── enabled.txt
+            ├── config.json
+            ├── phrases.json
+            ├── bot_names.json
+            └── Scripts/
+                ├── json.lua
                 └── main.lua
 ```
 
@@ -75,6 +83,14 @@ Raises the global budget cap in Splitgate 2's Map Editor ("The Lab") by modifyin
 - **Configuration:** Edit `ue4ss\Mods\MapEditorBudgetMod\scripts\config.lua` (`BudgetLimit = 10000` by default).
 - **Live Reload:** Press **`F7`** in-game to reload `config.lua` and apply a new limit without restarting.
 
+### `BotChatter`
+Makes AI bots send realistic, randomized, replication-safe in-game chat messages and use custom names during host-run P2P / listen-server lobbies (visible to all unmodded clients via `APortalWarsGameStateBaseV2::MulticastChatMessage` and `AGameModeBase::ChangeName`).
+
+- **Editable Phrase Pools (`phrases.json`):** Customize `pre_match`, `on_death`, `on_kill`, and `match_end` messages with `{bot}`, `{killer}`, `{victim}`, and `{map}` placeholders.
+- **Custom Bot Names (`bot_names.json`):** Replaces generic `"Ace 0..7"` bot names with unique randomized names (or optional fixed mappings via `fixed_names`).
+- **Configuration (`config.json`):** Tune chat chances, typing delays, anti-spam cooldown, optional name prefix/suffix, and toggle optional debug hotkeys (`enable_hotkeys`, disabled by default).
+- **Host Chat Commands:** `!botchat on`, `!botchat off`, `!botreload`, `!bottest`, `!botnames`
+
 ## Modding Possibilities
 
 With full UE4SS reflection, Live View, CXX Header Dumping, and Lua scripting working in Splitgate 2, the community can build:
@@ -97,10 +113,13 @@ Splitgate 2's UE 5.5.4 Shipping binary includes several engine-level customizati
 1. **Shuffled `EClassCastFlags`:** All 64 bit positions of `EClassCastFlags` are permuted (e.g. `CASTCLASS_FProperty` is bit 44 instead of bit 15). `install_patch.bat` / `patch_ue4ss_splitgate2.py` injects a 64-byte lookup table and atomic ring-buffer stub (`.sg2c` / `.sg2d`) at UE4SS's 4 central CastFlags getters to translate them back to standard UE 5.5 flags transparently.
 2. **Custom Struct & Field Layouts:** `FUObjectArray`, `TUObjectArray`, `UObjectBase`, `UField`, `UEnum`, `UStruct`, `UScriptStruct`, `UClass`, `UFunction`, `FField`, and `FProperty` (plus subclasses) have reordered fields — mapped in `ue4ss/MemberVariableLayout.ini`.
 3. **`FOptionalProperty::ValueProperty` Offset:** Stock UE4SS computes `RepNotifyFunc + 8`, which crashes during header dumping because Splitgate 2 moved `RepNotifyFunc` to `0x60` while `ValueProperty` remains at `0x78`. Fixed directly by the patcher.
-4. **Shifted `FMalloc` VTable:** `Malloc` (`0x30`), `Free` (`0x50`), `QuantizeSize` (`0x68`), and `GetAllocationSize` (`0x70`) are shifted — mapped in `ue4ss/VTableLayout.ini` (prevents OOM crashes during type system init).
-5. **Obfuscated `FUObjectHashTables`:** Bypassed cleanly via `bForceGUObjectArrayForIteration = true` in `UE4SS-settings.ini` and `UE4SS_Signatures/GUObjectArray.lua`.
-6. **Encrypted `UFunction::Func` Pointers:** Native C++ `UFunction::Func` pointers at `UFunction + 0xF8` are obfuscated (`rol64 + add`) and decrypted inside `UFunction::Invoke`.
-   - **Important for Mod Authors:** Do **not** directly hook native C++ `UFunction` pointers with `RegisterHook` (use property polling / `ExecuteWithDelay` / Blueprint hooks / `ProcessEvent` instead).
+4. **Shifted `FMalloc` & `UObject` VTables:**
+   - `FMalloc` (`Malloc = 0x30`, `Free = 0x50`, `QuantizeSize = 0x68`, `GetAllocationSize = 0x70`) is shifted (prevents OOM crashes during type system init).
+   - `UObject` has 6 extra virtual functions before `ProcessEvent`, shifting `GetWorld` to `0x198`, `ProcessEvent` to `0x280`, `GetFunctionCallspace` to `0x288`, `CallRemoteFunction` to `0x290`, and `ProcessConsoleExec` to `0x298` — mapped in `ue4ss/VTableLayout.ini`.
+5. **Encrypted `UObject::ProcessEvent` Calling Convention:** Splitgate 2 expects `rdx = &encrypted_UFunction*` instead of a raw `UFunction*` when invoking `UObject::ProcessEvent`. `install_patch.bat` / `patch_ue4ss_splitgate2.py` patches `RC::Unreal::UObject::ProcessEvent` and `InvokeProcessEventWithoutDetour` with a trampoline inside `.sg2c` that encrypts the `UFunction*` via the game's own runtime encryptor (`MainExe + 0x1268FE08`, resolved ASLR-safely through the x64 PEB), enabling all `UFunction` and RPC calls from Lua.
+6. **Obfuscated `FUObjectHashTables`:** Bypassed cleanly via `bForceGUObjectArrayForIteration = true` in `UE4SS-settings.ini` and `UE4SS_Signatures/GUObjectArray.lua`.
+7. **Encrypted `UFunction::Func` Pointers:** Native C++ `UFunction::Func` pointers at `UFunction + 0xF8` are obfuscated (`rol64 + add`) and decrypted inside `UFunction::Invoke`.
+   - **Important for Mod Authors:** Calling any `UFunction` / RPC from Lua (`obj:Func(...)`) works natively via our patched `ProcessEvent`. Do **not** directly hook native C++ `UFunction` pointers with `RegisterHook` (use property polling / `ExecuteWithDelay` instead).
 
 ## Known Quirks & Troubleshooting
 

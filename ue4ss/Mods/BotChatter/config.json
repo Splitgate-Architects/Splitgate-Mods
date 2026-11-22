@@ -1,0 +1,43 @@
+{
+  "enabled": true,
+  "host_only": true,
+  "debug_logging": false,
+
+  "custom_bot_names_enabled": true,
+  "rename_bots_random": true,
+  "bot_name_prefix": "",
+  "bot_name_suffix": "",
+
+  "chat_broadcast_function": "/Script/PortalWarsCore.PortalWarsGameStateBaseV2:MulticastChatMessage",
+  "chat_channel_tag": "UI.Chat.Text.Channel.Lobby",
+  "chat_channel_type_enum": 2,
+
+  "global_cooldown_seconds": 8,
+  "recent_phrase_history_size": 5,
+  "poll_interval_ms": 250,
+
+  "pre_match_enabled": true,
+  "pre_match_min_bots": 1,
+  "pre_match_max_bots": 3,
+  "pre_match_delay_min_ms": 1500,
+  "pre_match_delay_max_ms": 5500,
+
+  "death_chat_enabled": true,
+  "death_chat_chance": 0.30,
+  "death_delay_min_ms": 1200,
+  "death_delay_max_ms": 3000,
+
+  "kill_chat_enabled": true,
+  "kill_chat_chance": 0.12,
+  "kill_delay_min_ms": 1400,
+  "kill_delay_max_ms": 3200,
+
+  "match_end_enabled": true,
+  "match_end_min_bots": 1,
+  "match_end_max_bots": 3,
+  "match_end_delay_min_ms": 1200,
+  "match_end_delay_max_ms": 4500,
+
+  "enable_event_hooks": false,
+  "enable_hotkeys": false
+}

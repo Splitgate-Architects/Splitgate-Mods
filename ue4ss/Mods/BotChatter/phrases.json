@@ -1,0 +1,46 @@
+{
+  "pre_match": [
+    "glhf!",
+    "gl hf everyone",
+    "Ready to portal",
+    "Let's go!",
+    "Warmup time",
+    "Love {map}, let's have a good one",
+    "Don't forget to watch the portals on {map}",
+    "hf!",
+    "Alright let's see what we've got",
+    "Good luck guys"
+  ],
+  "on_death": [
+    "Nice shot",
+    "Nice shot {killer}!",
+    "Didn't see that portal",
+    "Lag!",
+    "wp",
+    "Close one",
+    "Okay {killer}, respect",
+    "How did you get behind me??",
+    "Clean portal play {killer}",
+    "My aim vanished there lol",
+    "Fair enough",
+    "Unlucky"
+  ],
+  "on_kill": [
+    "Gotcha",
+    "Clean angle",
+    "Caught you {victim}!",
+    "Portal diff",
+    "Watch your back {victim}",
+    "Too quick",
+    "Nice try {victim}"
+  ],
+  "match_end": [
+    "gg",
+    "gg wp",
+    "ggs!",
+    "Rematch?",
+    "Fun match on {map}",
+    "Close game, gg everyone",
+    "Well played!"
+  ]
+}

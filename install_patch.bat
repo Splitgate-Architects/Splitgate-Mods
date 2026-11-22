@@ -170,6 +170,10 @@ function Add-UInt32LE([System.Collections.Generic.List[byte]]$List, [uint32]$Val
     $List.AddRange([System.BitConverter]::GetBytes([uint32]$Value))
 }
 
+function Add-UInt64LE([System.Collections.Generic.List[byte]]$List, [uint64]$Value) {
+    $List.AddRange([System.BitConverter]::GetBytes([uint64]$Value))
+}
+
 function Add-UInt16LE([System.Collections.Generic.List[byte]]$List, [uint16]$Value) {
     $List.AddRange([System.BitConverter]::GetBytes([uint16]$Value))
 }
@@ -277,6 +281,70 @@ function Build-Stub([uint32]$CodeVA, [uint32]$DataVA) {
     }
     while ($buf.Count -lt $lutOff) { $buf.Add(0xCC) }
     Add-Bytes $buf (Build-Lut)
+
+    # 6. Splitgate 2 UObject::ProcessEvent UFunction* encryption trampolines (at .sg2c + 0x140)
+    #    Splitgate 2 expects rdx = &encrypted_UFunction* when calling UObject::ProcessEvent (vtable 0x280).
+    #    Reads MainExe base ASLR-safely from Windows x64 PEB (gs:[0x60]->ImageBaseAddress),
+    #    invokes the game's own encryptor at [MainExe + 0x1268FE08], and forwards to target_pe_fn.
+    $offs['sg2_invoke_pe_nodetour'] = $buf.Count
+    Add-Bytes $buf ([byte[]]@(0x48, 0x8B, 0x4C, 0x24, 0x58))       # mov rcx, [rsp+0x58]
+    Add-Bytes $buf ([byte[]]@(0xEB, 0x05))                         # jmp short +5 -> sg2_call_process_event
+
+    $offs['sg2_tail_process_event'] = $buf.Count
+    Add-Bytes $buf ([byte[]]@(0x48, 0x83, 0xC4, 0x40))             # add rsp, 0x40
+    Add-Bytes $buf ([byte[]]@(0x5F))                               # pop rdi
+
+    $offs['sg2_call_process_event'] = $buf.Count
+    Add-Bytes $buf ([byte[]]@(0x53, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56)) # push rbx, r12, r13, r14
+    Add-Bytes $buf ([byte[]]@(0x48, 0x83, 0xEC, 0x38))             # sub rsp, 0x38
+    Add-Bytes $buf ([byte[]]@(0x49, 0x89, 0xCC))                   # mov r12, rcx (this)
+    Add-Bytes $buf ([byte[]]@(0x48, 0x89, 0xD3))                   # mov rbx, rdx (raw_func)
+    Add-Bytes $buf ([byte[]]@(0x4D, 0x89, 0xC5))                   # mov r13, r8  (parms)
+    Add-Bytes $buf ([byte[]]@(0x4D, 0x89, 0xCE))                   # mov r14, r9  (target_pe_fn)
+
+    # tmp_val = rol64(raw_func + 0xBEDC2D2E44F97496, 0x0C) - 0x4C4B20628241E15E
+    Add-Bytes $buf ([byte[]]@(0x48, 0xB8))
+    Add-UInt64LE $buf ([Convert]::ToUInt64("BEDC2D2E44F97496", 16))
+    Add-Bytes $buf ([byte[]]@(0x48, 0x03, 0xC3))                   # add rax, rbx
+    Add-Bytes $buf ([byte[]]@(0x48, 0xC1, 0xC0, 0x0C))             # rol rax, 0x0C
+    Add-Bytes $buf ([byte[]]@(0x48, 0xB9))
+    Add-UInt64LE $buf ([Convert]::ToUInt64("4C4B20628241E15E", 16))
+    Add-Bytes $buf ([byte[]]@(0x48, 0x2B, 0xC1))                   # sub rax, rcx
+    Add-Bytes $buf ([byte[]]@(0x48, 0x89, 0x44, 0x24, 0x20))       # mov [rsp+0x20], rax
+
+    # Load & decrypt game encryptor fn ptr from [MainExe + 0x1268FE08]
+    Add-Bytes $buf ([byte[]]@(0x65, 0x4C, 0x8B, 0x14, 0x25, 0x60, 0x00, 0x00, 0x00)) # mov r10, gs:[0x60]
+    Add-Bytes $buf ([byte[]]@(0x4D, 0x8B, 0x52, 0x10))                               # mov r10, [r10+0x10]
+    Add-Bytes $buf ([byte[]]@(0x49, 0x8B, 0x82))
+    Add-UInt32LE $buf ([uint32]0x1268FE08)                                           # mov rax, [r10+0x1268FE08]
+    Add-Bytes $buf ([byte[]]@(0x48, 0xB9))
+    Add-UInt64LE $buf ([Convert]::ToUInt64("3070B90431743569", 16))
+    Add-Bytes $buf ([byte[]]@(0x48, 0x33, 0xC1))                   # xor rax, rcx
+    Add-Bytes $buf ([byte[]]@(0x48, 0xC1, 0xC0, 0x1A))             # rol rax, 0x1A
+    Add-Bytes $buf ([byte[]]@(0x48, 0xB9))
+    Add-UInt64LE $buf ([Convert]::ToUInt64("C2E7B448F7CCA0A1", 16))
+    Add-Bytes $buf ([byte[]]@(0x48, 0x03, 0xC1))                   # add rax, rcx
+
+    # Call encryptor(0x06797F05C4913828, &tmp_val)
+    Add-Bytes $buf ([byte[]]@(0x48, 0xB9))
+    Add-UInt64LE $buf ([Convert]::ToUInt64("06797F05C4913828", 16))
+    Add-Bytes $buf ([byte[]]@(0x48, 0x8D, 0x54, 0x24, 0x20))       # lea rdx, [rsp+0x20]
+    Add-Bytes $buf ([byte[]]@(0xFF, 0xD0))                         # call rax
+
+    # Store encrypted UFunction* and invoke target_pe_fn(this, &enc_func, parms)
+    Add-Bytes $buf ([byte[]]@(0x48, 0x89, 0x44, 0x24, 0x28))       # mov [rsp+0x28], rax
+    Add-Bytes $buf ([byte[]]@(0x4C, 0x89, 0xE1))                   # mov rcx, r12
+    Add-Bytes $buf ([byte[]]@(0x48, 0x8D, 0x54, 0x24, 0x28))       # lea rdx, [rsp+0x28]
+    Add-Bytes $buf ([byte[]]@(0x4D, 0x89, 0xE8))                   # mov r8, r13
+    Add-Bytes $buf ([byte[]]@(0x41, 0xFF, 0xD6))                   # call r14
+
+    # Epilogue
+    Add-Bytes $buf ([byte[]]@(0x48, 0x83, 0xC4, 0x38))             # add rsp, 0x38
+    Add-Bytes $buf ([byte[]]@(0x41, 0x5E, 0x41, 0x5D, 0x41, 0x5C, 0x5B, 0xC3)) # pop r14..rbx; ret
+
+    if ($buf.Count -gt 0x200) {
+        throw "Code stub exceeded 0x200 bytes ($($buf.Count))"
+    }
     while ($buf.Count -lt 0x200) { $buf.Add(0x00) }
 
     return @{ Bytes = $buf.ToArray(); Offsets = $offs }
@@ -424,6 +492,47 @@ function Patch-UE4SS([string]$DllPath) {
             $data[$fo + $i] = $p.Replace[$i]
         }
         Write-Host ("[OK] Patched 0x{0:X8} ({1})" -f $p.Rva, $p.Desc) -ForegroundColor DarkGreen
+    }
+
+    # 2 UObject::ProcessEvent UFunction* encryption patches
+    $pePatches = @(
+        @{
+            Rva      = [uint32]0x00B0DCC1
+            Expected = [byte[]]@(0x48,0x83,0xC4,0x40,0x5F,0x49,0xFF,0xE1)
+            Opcode   = [byte]0xE9
+            Label    = 'sg2_tail_process_event'
+            Desc     = 'UObject::ProcessEvent encrypted UFunction* wrapper'
+        }
+        @{
+            Rva      = [uint32]0x00B53823
+            Expected = [byte[]]@(0x48,0x8B,0x4C,0x24,0x50,0x41,0xFF,0xD1)
+            Opcode   = [byte]0xE8
+            Label    = 'sg2_invoke_pe_nodetour'
+            Desc     = 'InvokeProcessEventWithoutDetour encrypted UFunction* wrapper'
+        }
+    )
+
+    foreach ($p in $pePatches) {
+        $fo = Rva-ToOff $p.Rva
+        if (-not (Compare-ByteSlice $origBytes $fo $p.Expected)) {
+            $gotHex = Format-HexBytes $origBytes $fo $p.Expected.Length
+            $expHex = Format-HexBytes $p.Expected 0 $p.Expected.Length
+            throw ("Byte mismatch at 0x{0:X8}: got [{1}], expected [{2}]. Make sure you are using UE4SS v4.0.0 (Git SHA #30afe5ff, standard release)!" -f $p.Rva, $gotHex, $expHex)
+        }
+        $tgtVA = $codeVA + [uint32]$offs[$p.Label]
+        $rel32 = [int]([int64]$tgtVA - ([int64]$p.Rva + 5))
+        $relBytes = [System.BitConverter]::GetBytes($rel32)
+
+        $data[$fo]     = $p.Opcode
+        $data[$fo + 1] = $relBytes[0]
+        $data[$fo + 2] = $relBytes[1]
+        $data[$fo + 3] = $relBytes[2]
+        $data[$fo + 4] = $relBytes[3]
+        $data[$fo + 5] = 0x90
+        $data[$fo + 6] = 0x90
+        $data[$fo + 7] = 0x90
+
+        Write-Host ("[OK] Patched 0x{0:X8} -> 0x{1:X8} ({2})" -f $p.Rva, $tgtVA, $p.Desc) -ForegroundColor DarkGreen
     }
 
     # Append padding up to codeRA, then .sg2c, then .sg2d
