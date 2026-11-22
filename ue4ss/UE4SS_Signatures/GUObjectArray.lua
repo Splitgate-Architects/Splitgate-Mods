@@ -1,0 +1,11 @@
+function Register()
+    return "8B 15 ?? ?? ?? ?? 85 D2 7E 0C 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05"
+end
+
+function OnMatchFound(MatchAddress)
+    local LeaInstr = MatchAddress + 0xA
+    local NextInstr = LeaInstr + 0x7
+    local Offset = LeaInstr + 0x3
+    local ObjObjectsAddr = NextInstr + DerefToInt32(Offset)
+    return ObjObjectsAddr - 0x40
+end
